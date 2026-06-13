@@ -74,7 +74,7 @@ export function LoginForm() {
             CRM
           </Link>
           <a
-            href="https://steelit.site"
+            href="https://www.steelit.site"
             target="_blank"
             rel="noreferrer"
             className="text-sm font-medium text-slate-600 hover:text-slate-950"
@@ -168,4 +168,3 @@ export function LoginForm() {
     </div>
   );
 }
-

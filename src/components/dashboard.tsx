@@ -418,7 +418,7 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
           </div>
           <nav className="flex flex-wrap items-center gap-2">
             <a
-              href="https://steelit.site"
+              href="https://www.steelit.site"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
