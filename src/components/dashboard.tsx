@@ -39,8 +39,31 @@ type DashboardProps = {
 type Tab = "overview" | "site" | "spec" | "finance" | "notes";
 type PipelineFilter = "live" | "completed" | "all";
 type SortField = "installationDate" | "projectName" | "orderValue" | "stage";
+type DisplayRow =
+  | { type: "group"; groupName: string; count: number; value: number }
+  | { type: "project"; project: Project; index: number };
 
 const empty = "-";
+const groupOrder = [
+  "Pre Production",
+  "Ready for Production",
+  "In Production",
+  "At Finishers",
+  "Ready for Delivery",
+  "On SIte",
+  "Payment Application Made",
+  "Completed",
+];
+const groupColors: Record<string, string> = {
+  "Pre Production": "#3b82f6",
+  "Ready for Production": "#10b981",
+  "In Production": "#f59e0b",
+  "At Finishers": "#ef4444",
+  "Ready for Delivery": "#8b5cf6",
+  "On SIte": "#ec4899",
+  "Payment Application Made": "#06b6d4",
+  Completed: "#84cc16",
+};
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -239,6 +262,36 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
       })
       .sort(compareProjects(sortField));
   }, [calcStatus, group, mondayStatus, pipeline, projects, query, sortField, stage]);
+
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    const grouped = new Map<string, Project[]>();
+
+    for (const project of filteredProjects) {
+      const groupName = project.groupName || "Unassigned";
+      grouped.set(groupName, [...(grouped.get(groupName) ?? []), project]);
+    }
+
+    const sortedGroups = Array.from(grouped.keys()).sort((a, b) => {
+      const left = groupOrder.indexOf(a);
+      const right = groupOrder.indexOf(b);
+
+      if (left !== -1 || right !== -1) {
+        return (left === -1 ? Number.MAX_SAFE_INTEGER : left) - (right === -1 ? Number.MAX_SAFE_INTEGER : right);
+      }
+
+      return a.localeCompare(b);
+    });
+
+    return sortedGroups.flatMap((groupName) => {
+      const groupProjects = grouped.get(groupName) ?? [];
+      const value = groupProjects.reduce((total, project) => total + (project.orderValue ?? 0), 0);
+
+      return [
+        { type: "group" as const, groupName, count: groupProjects.length, value },
+        ...groupProjects.map((project, index) => ({ type: "project" as const, project, index })),
+      ];
+    });
+  }, [filteredProjects]);
 
   const selectedProject = useMemo(() => {
     return (
@@ -451,9 +504,9 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
 
           <div className="max-h-[calc(100vh-260px)] min-h-[520px] overflow-auto">
             <table className="min-w-[1320px] border-separate border-spacing-0 text-left text-sm">
-              <thead className="sticky top-0 z-10 bg-slate-100 text-xs font-semibold uppercase text-slate-600">
+              <thead className="sticky top-0 z-10 bg-[#1f2937] text-xs font-semibold uppercase text-white">
                 <tr>
-                  <Th className="sticky left-0 z-20 w-[360px] bg-slate-100">Project</Th>
+                  <Th className="sticky left-0 z-20 w-[360px] bg-[#1f2937]">Project</Th>
                   <Th>Job</Th>
                   <Th>Group</Th>
                   <Th>Monday</Th>
@@ -467,8 +520,30 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                 </tr>
               </thead>
               <tbody>
-                {filteredProjects.map((project) => {
+                {displayRows.length ? displayRows.map((row) => {
+                  if (row.type === "group") {
+                    const color = groupColors[row.groupName] ?? "#64748b";
+
+                    return (
+                      <tr key={`group-${row.groupName}`}>
+                        <td colSpan={11} className="border-y border-white/40 p-0">
+                          <div
+                            className="flex h-10 items-center justify-between px-3 text-sm font-semibold text-white"
+                            style={{ backgroundColor: color }}
+                          >
+                            <span>{row.groupName}</span>
+                            <span className="text-xs font-medium">
+                              {row.count.toLocaleString("en-GB")} items · {formatCurrency(row.value)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  const project = row.project;
                   const selected = selectedProject?.sourceKey === project.sourceKey;
+                  const rowFill = row.index % 2 === 0 ? "bg-[#f3f4f6]" : "bg-white";
 
                   return (
                     <tr
@@ -479,10 +554,10 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                       }}
                       className={clsx(
                         "cursor-pointer border-b border-slate-200 hover:bg-amber-50/60",
-                        selected ? "bg-orange-50" : "bg-white",
+                        selected ? "bg-orange-50" : rowFill,
                       )}
                     >
-                      <Td className={clsx("sticky left-0 z-[5] w-[360px] border-r border-slate-200", selected ? "bg-orange-50" : "bg-white")}>
+                      <Td className={clsx("sticky left-0 z-[5] w-[360px] border-r border-slate-200", selected ? "bg-orange-50" : rowFill)}>
                         <div className="max-w-[330px] truncate font-medium text-slate-950">{project.projectName}</div>
                         <div className="mt-1 truncate text-xs text-slate-500">{clean(project.sitePostCode)} · {clean(project.useCase)}</div>
                       </Td>
@@ -498,7 +573,13 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                       <Td className="text-right tabular-nums">{formatPercent(project.jobMargin)}</Td>
                     </tr>
                   );
-                })}
+                }) : (
+                  <tr>
+                    <td colSpan={11} className="h-48 border-b border-slate-200 bg-white px-4 text-center text-sm text-slate-500">
+                      {authEmail ? "No projects match the current filters." : "Sign in to load CRM projects from Supabase."}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
