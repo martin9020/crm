@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Steelit CRM
 
-## Getting Started
+Fresh Next.js CRM built from:
 
-First, run the development server:
+- `../monday_graphql_export.xlsx` as the source database export
+- `../Projects_Summary_September.xlsx` as the spreadsheet-style design reference
+
+Email sending is intentionally excluded until the final sending domain is chosen.
+
+## Stack
+
+- Next.js App Router
+- TypeScript
+- Tailwind CSS
+- Supabase Postgres/Auth
+- Excel import via `exceljs`
+- GitHub Pages static export
+
+## Local Development
+
+```bash
+npm install
+npm run generate:data
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+The dashboard does not ship real workbook data in the static bundle. Project data loads from Supabase after a user signs in.
+
+## Supabase
+
+The CRM is isolated inside the existing `steelit.site` Supabase project with `crm_*` tables. It does not use or overwrite generic tables like `projects` or `profiles`.
+
+Copy `.env.example` to `.env.local` and fill:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+Apply the migration:
+
+```sql
+supabase/migrations/202606140001_initial_crm.sql
+```
+
+Import the workbook after the schema exists:
+
+```bash
+npm run import:monday
+```
+
+The import upserts projects by Monday `Item ID`.
+
+The original Excel row is preserved in `crm_projects.raw_data`, so unmapped workbook columns are not lost.
+
+## GitHub Pages
+
+The app is built as a static export into `out/`.
+
+GitHub repository variables:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+NEXT_PUBLIC_BASE_PATH
+```
+
+Use `NEXT_PUBLIC_BASE_PATH` only if the site is served under a repository path, for example `/steelit-crm`. Leave it empty for a custom domain or root GitHub Pages site.
+
+## Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run build
+npm run lint
+npm run import:dry-run
+npm run import:monday
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
