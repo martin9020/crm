@@ -85,6 +85,10 @@ const groupTextColors: Record<string, string> = {
   "In Production": "#332c00",
   Completed: "#1a2e05",
 };
+const dropdownMenuOptionStyle: CSSProperties = {
+  backgroundColor: "#ffffff",
+  color: "#0f172a",
+};
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -1064,9 +1068,9 @@ function ProjectFieldEditor({
         className={baseClass}
         style={colorStyle}
       >
-        <option value="">-</option>
+        <option value="" style={dropdownMenuOptionStyle}>-</option>
         {options.map((option) => (
-          <option key={option} value={option} style={getFieldColorStyle(fieldKey, option)}>
+          <option key={option} value={option} style={dropdownMenuOptionStyle}>
             {option}
           </option>
         ))}
