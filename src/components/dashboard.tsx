@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import {
   ArrowDownAZ,
@@ -35,7 +35,7 @@ import {
   type ProjectOptionSets,
 } from "@/lib/editable-project-fields";
 import { mapDbNote, mapDbProject } from "@/lib/project-map";
-import { statusClass } from "@/lib/status";
+import { statusClass, statusStyle } from "@/lib/status";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { DataSourceMode, Project, ProjectNote } from "@/types/project";
 
@@ -80,6 +80,10 @@ const groupColors: Record<string, string> = {
   "On SIte": "#ec4899",
   "Payment Application Made": "#06b6d4",
   Completed: "#84cc16",
+};
+const groupTextColors: Record<string, string> = {
+  "In Production": "#332c00",
+  Completed: "#1a2e05",
 };
 
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -602,7 +606,7 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
             </div>
           </div>
 
-          <div className="max-h-[calc(100vh-260px)] min-h-[520px] overflow-auto">
+          <div className="max-h-[calc(100vh-260px)] min-h-[520px] overflow-auto bg-white">
             <table className="min-w-[1320px] border-separate border-spacing-0 text-left text-sm">
               <thead className="sticky top-0 z-10 bg-[#1e293b] text-xs font-semibold uppercase text-slate-100">
                 <tr>
@@ -643,7 +647,7 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
 
                   const project = row.project;
                   const selected = selectedProject?.sourceKey === project.sourceKey;
-                  const rowFill = row.index % 2 === 0 ? "bg-[#111827]" : "bg-[#0f172a]";
+                  const rowFill = row.index % 2 === 0 ? "bg-[#f3f4f6]" : "bg-white";
 
                   return (
                     <tr
@@ -653,13 +657,13 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                         setActiveTab("overview");
                       }}
                       className={clsx(
-                        "cursor-pointer border-b border-[#334155] hover:bg-[#1e3a5f]/80",
-                        selected ? "bg-[#1d4ed8]/30" : rowFill,
+                        "cursor-pointer border-b border-[#d1d5db] hover:bg-[#dbeafe]",
+                        selected ? "bg-[#bfdbfe]" : rowFill,
                       )}
                     >
-                      <Td className={clsx("sticky left-0 z-[5] w-[360px] border-r border-[#334155]", selected ? "bg-[#1d4ed8]/30" : rowFill)}>
-                        <div className="max-w-[330px] truncate font-medium text-slate-100">{project.projectName}</div>
-                        <div className="mt-1 truncate text-xs text-slate-400">{clean(project.sitePostCode)} · {clean(project.useCase)}</div>
+                      <Td className={clsx("sticky left-0 z-[5] w-[360px] border-r border-[#d1d5db]", selected ? "bg-[#bfdbfe]" : rowFill)}>
+                        <div className="max-w-[330px] truncate font-medium text-slate-950">{project.projectName}</div>
+                        <div className="mt-1 truncate text-xs text-slate-600">{clean(project.sitePostCode)} · {clean(project.useCase)}</div>
                       </Td>
                       <Td>{clean(project.jobNumber)}</Td>
                       <Td>
@@ -756,7 +760,7 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                   );
                 }) : (
                   <tr>
-                    <td colSpan={11} className="h-48 border-b border-[#334155] bg-[#0f172a] px-4 text-center text-sm text-slate-400">
+                    <td colSpan={11} className="h-48 border-b border-[#d1d5db] bg-white px-4 text-center text-sm text-slate-600">
                       {authEmail ? "No projects match the current filters." : "Sign in to load CRM projects from Supabase."}
                     </td>
                   </tr>
@@ -988,7 +992,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
 }
 
 function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={clsx("border-b border-[#334155] px-3 py-2 align-middle text-slate-300", className)}>{children}</td>;
+  return <td className={clsx("border-b border-[#d1d5db] px-3 py-2 align-middle text-slate-800", className)}>{children}</td>;
 }
 
 function ProjectFieldEditor({
@@ -1011,15 +1015,35 @@ function ProjectFieldEditor({
   const cellKey = `${project.sourceKey}:${fieldKey}`;
   const isSaving = savingCell === cellKey;
   const disabled = !canEdit || isSaving;
+  const colorStyle = getFieldColorStyle(fieldKey, value);
   const baseClass = clsx(
-    "rounded border border-[#334155] bg-[#020617] text-slate-100 outline-none transition focus:border-[#3b82f6] disabled:cursor-not-allowed disabled:opacity-60",
+    "rounded border outline-none transition focus:border-[#3b82f6] disabled:cursor-not-allowed disabled:opacity-60",
+    colorStyle
+      ? "font-semibold"
+      : compact
+        ? "border-[#d1d5db] bg-white text-slate-950"
+        : "border-[#334155] bg-[#020617] text-slate-100",
     compact ? "h-8 min-w-28 max-w-44 px-2 text-xs" : "min-h-9 w-full px-2 py-1.5 text-sm",
     align === "right" && "text-right tabular-nums",
   );
 
   if (!canEdit) {
+    if (colorStyle) {
+      return (
+        <span
+          className={clsx(
+            "inline-flex min-h-7 max-w-full items-center rounded border px-2 py-1 text-xs font-semibold leading-tight",
+            align === "right" && "justify-end tabular-nums",
+          )}
+          style={colorStyle}
+        >
+          {formatEditorDisplayValue(fieldKey, rawValue)}
+        </span>
+      );
+    }
+
     return (
-      <span className={clsx("block truncate text-slate-300", align === "right" && "text-right tabular-nums")}>
+      <span className={clsx("block truncate", compact ? "text-slate-800" : "text-slate-300", align === "right" && "text-right tabular-nums")}>
         {formatEditorDisplayValue(fieldKey, rawValue)}
       </span>
     );
@@ -1038,10 +1062,11 @@ function ProjectFieldEditor({
           void onSave(project, fieldKey, event.target.value);
         }}
         className={baseClass}
+        style={colorStyle}
       >
         <option value="">-</option>
         {options.map((option) => (
-          <option key={option} value={option}>
+          <option key={option} value={option} style={getFieldColorStyle(fieldKey, option)}>
             {option}
           </option>
         ))}
@@ -1061,6 +1086,7 @@ function ProjectFieldEditor({
         onBlur={(event) => {
           void onSave(project, fieldKey, event.target.value);
         }}
+        style={colorStyle}
         className={clsx(baseClass, "min-h-24 resize-y leading-6")}
       />
     );
@@ -1088,9 +1114,54 @@ function ProjectFieldEditor({
           event.currentTarget.blur();
         }
       }}
+      style={colorStyle}
       className={baseClass}
     />
   );
+}
+
+function getFieldColorStyle(fieldKey: EditableProjectFieldKey, value: string): CSSProperties | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (fieldKey === "groupName") {
+    const backgroundColor = groupColors[value];
+
+    if (!backgroundColor) {
+      return undefined;
+    }
+
+    return {
+      backgroundColor,
+      borderColor: backgroundColor,
+      color: groupTextColors[value] ?? "#ffffff",
+    };
+  }
+
+  if (fieldKey === "mondayStatus") {
+    return statusStyle(value, "monday");
+  }
+
+  if (fieldKey === "stage") {
+    return statusStyle(value, "stage");
+  }
+
+  if (fieldKey === "calcStatus") {
+    return statusStyle(value, "calc");
+  }
+
+  if (fieldKey === "status") {
+    if (value === "Active") {
+      return { backgroundColor: "#d1fae5", borderColor: "#10b981", color: "#064e3b" };
+    }
+
+    if (value === "Inactive") {
+      return { backgroundColor: "#e5e7eb", borderColor: "#9ca3af", color: "#374151" };
+    }
+  }
+
+  return undefined;
 }
 
 function EditableDetailRow({
