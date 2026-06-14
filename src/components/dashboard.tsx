@@ -25,6 +25,15 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 import { compactNumber, formatCurrency, formatDate, formatPercent } from "@/lib/format";
+import {
+  buildProjectOptionSets,
+  editableProjectFields,
+  getProjectFieldValue,
+  toDbFieldValue,
+  toProjectFieldValue,
+  type EditableProjectFieldKey,
+  type ProjectOptionSets,
+} from "@/lib/editable-project-fields";
 import { mapDbNote, mapDbProject } from "@/lib/project-map";
 import { statusClass } from "@/lib/status";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -39,9 +48,17 @@ type DashboardProps = {
 type Tab = "overview" | "site" | "spec" | "finance" | "notes";
 type PipelineFilter = "live" | "completed" | "all";
 type SortField = "installationDate" | "projectName" | "orderValue" | "stage";
+type ProjectSaveHandler = (project: Project, fieldKey: EditableProjectFieldKey, value: string) => Promise<void>;
 type DisplayRow =
   | { type: "group"; groupName: string; count: number; value: number }
   | { type: "project"; project: Project; index: number };
+type ProjectEditorProps = {
+  project: Project;
+  optionSets: ProjectOptionSets;
+  canEdit: boolean;
+  savingCell: string | null;
+  onSave: ProjectSaveHandler;
+};
 
 const empty = "-";
 const groupOrder = [
@@ -157,6 +174,9 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
   const [draftNote, setDraftNote] = useState("");
   const [notesByProject, setNotesByProject] = useState<Record<string, ProjectNote[]>>({});
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [editMessage, setEditMessage] = useState("");
 
   useEffect(() => {
     if (!supabase) {
@@ -224,6 +244,8 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
   const stages = useMemo(() => getUnique(projects, "stage"), [projects]);
   const mondayStatuses = useMemo(() => getUnique(projects, "mondayStatus"), [projects]);
   const calcStatuses = useMemo(() => getUnique(projects, "calcStatus"), [projects]);
+  const optionSets = useMemo(() => buildProjectOptionSets(projects), [projects]);
+  const canEditProjects = Boolean(authEmail && supabase);
 
   const filteredProjects = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -397,6 +419,77 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
     window.setTimeout(() => setNoteStatus("idle"), 1500);
   }
 
+  async function saveProjectField(project: Project, fieldKey: EditableProjectFieldKey, value: string) {
+    const definition = editableProjectFields[fieldKey];
+    const currentValue = getProjectFieldValue(project, fieldKey);
+    const nextProjectValue = toProjectFieldValue(fieldKey, value);
+
+    if ((currentValue ?? null) === nextProjectValue) {
+      return;
+    }
+
+    if (!supabase || !authEmail || !project.id) {
+      setEditStatus("error");
+      setEditMessage("Sign in required.");
+      return;
+    }
+
+    let dbValue: unknown;
+
+    try {
+      dbValue = toDbFieldValue(fieldKey, value);
+    } catch (saveError) {
+      setEditStatus("error");
+      setEditMessage(saveError instanceof Error ? saveError.message : "Could not save project.");
+      return;
+    }
+
+    const previousProjects = projects;
+    const cellKey = `${project.sourceKey}:${fieldKey}`;
+
+    setSavingCell(cellKey);
+    setEditStatus("idle");
+    setEditMessage("");
+    setProjects((current) =>
+      current.map((item) =>
+        item.sourceKey === project.sourceKey
+          ? {
+              ...item,
+              [fieldKey]: nextProjectValue,
+            }
+          : item,
+      ),
+    );
+
+    const { data, error: updateError } = await supabase
+      .from("crm_projects")
+      .update({ [definition.dbColumn]: dbValue })
+      .eq("id", project.id)
+      .select("*")
+      .single();
+
+    setSavingCell(null);
+
+    if (updateError || !data) {
+      setProjects(previousProjects);
+      setEditStatus("error");
+      setEditMessage(updateError?.message ?? "Could not save project.");
+      return;
+    }
+
+    const updatedProject = mapDbProject(data);
+
+    setProjects((current) =>
+      current.map((item) => (item.sourceKey === updatedProject.sourceKey ? updatedProject : item)),
+    );
+    setEditStatus("saved");
+    setEditMessage("Saved");
+    window.setTimeout(() => {
+      setEditStatus("idle");
+      setEditMessage("");
+    }, 1400);
+  }
+
   return (
     <main className="min-h-screen bg-[#020617] text-slate-100">
       <header className="border-b border-[#334155] bg-[#0f172a]/95 backdrop-blur">
@@ -415,6 +508,11 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                   {dataSource === "supabase" ? "Supabase" : "Local workbook"}
                 </span>
                 {loadError ? <span className="text-red-300">{loadError}</span> : null}
+                {editMessage ? (
+                  <span className={editStatus === "error" ? "text-red-300" : "text-emerald-300"}>
+                    {editMessage}
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
@@ -564,14 +662,95 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
                         <div className="mt-1 truncate text-xs text-slate-400">{clean(project.sitePostCode)} · {clean(project.useCase)}</div>
                       </Td>
                       <Td>{clean(project.jobNumber)}</Td>
-                      <Td>{clean(project.groupName)}</Td>
-                      <Td><span className={statusClass(project.mondayStatus, "monday")}>{clean(project.mondayStatus)}</span></Td>
-                      <Td><span className={statusClass(project.stage, "stage")}>{clean(project.stage)}</span></Td>
-                      <Td><span className={statusClass(project.calcStatus, "calc")}>{clean(project.calcStatus)}</span></Td>
-                      <Td>{clean(project.rep)}</Td>
-                      <Td>{clean(project.detailer)}</Td>
-                      <Td>{formatDate(project.installationDate)}</Td>
-                      <Td className="text-right tabular-nums">{formatCurrency(project.orderValue)}</Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="groupName"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="mondayStatus"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="stage"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="calcStatus"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="rep"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="detailer"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td>
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="installationDate"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                        />
+                      </Td>
+                      <Td className="text-right tabular-nums">
+                        <ProjectFieldEditor
+                          project={project}
+                          fieldKey="orderValue"
+                          optionSets={optionSets}
+                          canEdit={canEditProjects}
+                          savingCell={savingCell}
+                          onSave={saveProjectField}
+                          compact
+                          align="right"
+                        />
+                      </Td>
                       <Td className="text-right tabular-nums">{formatPercent(project.jobMargin)}</Td>
                     </tr>
                   );
@@ -658,10 +837,42 @@ export function Dashboard({ projects: initialProjects, source, error }: Dashboar
               </div>
 
               <div className="max-h-[calc(100vh-236px)] overflow-auto p-4">
-                {activeTab === "overview" ? <Overview project={selectedProject} /> : null}
-                {activeTab === "site" ? <Site project={selectedProject} /> : null}
-                {activeTab === "spec" ? <Spec project={selectedProject} /> : null}
-                {activeTab === "finance" ? <Finance project={selectedProject} /> : null}
+                {activeTab === "overview" ? (
+                  <Overview
+                    project={selectedProject}
+                    optionSets={optionSets}
+                    canEdit={canEditProjects}
+                    savingCell={savingCell}
+                    onSave={saveProjectField}
+                  />
+                ) : null}
+                {activeTab === "site" ? (
+                  <Site
+                    project={selectedProject}
+                    optionSets={optionSets}
+                    canEdit={canEditProjects}
+                    savingCell={savingCell}
+                    onSave={saveProjectField}
+                  />
+                ) : null}
+                {activeTab === "spec" ? (
+                  <Spec
+                    project={selectedProject}
+                    optionSets={optionSets}
+                    canEdit={canEditProjects}
+                    savingCell={savingCell}
+                    onSave={saveProjectField}
+                  />
+                ) : null}
+                {activeTab === "finance" ? (
+                  <Finance
+                    project={selectedProject}
+                    optionSets={optionSets}
+                    canEdit={canEditProjects}
+                    savingCell={savingCell}
+                    onSave={saveProjectField}
+                  />
+                ) : null}
                 {activeTab === "notes" ? (
                   <Notes
                     project={selectedProject}
@@ -780,6 +991,153 @@ function Td({ children, className }: { children: React.ReactNode; className?: st
   return <td className={clsx("border-b border-[#334155] px-3 py-2 align-middle text-slate-300", className)}>{children}</td>;
 }
 
+function ProjectFieldEditor({
+  project,
+  fieldKey,
+  optionSets,
+  canEdit,
+  savingCell,
+  onSave,
+  compact = false,
+  align = "left",
+}: ProjectEditorProps & {
+  fieldKey: EditableProjectFieldKey;
+  compact?: boolean;
+  align?: "left" | "right";
+}) {
+  const definition = editableProjectFields[fieldKey];
+  const rawValue = getProjectFieldValue(project, fieldKey);
+  const value = rawValue === null || rawValue === undefined ? "" : String(rawValue);
+  const cellKey = `${project.sourceKey}:${fieldKey}`;
+  const isSaving = savingCell === cellKey;
+  const disabled = !canEdit || isSaving;
+  const baseClass = clsx(
+    "rounded border border-[#334155] bg-[#020617] text-slate-100 outline-none transition focus:border-[#3b82f6] disabled:cursor-not-allowed disabled:opacity-60",
+    compact ? "h-8 min-w-28 max-w-44 px-2 text-xs" : "min-h-9 w-full px-2 py-1.5 text-sm",
+    align === "right" && "text-right tabular-nums",
+  );
+
+  if (!canEdit) {
+    return (
+      <span className={clsx("block truncate text-slate-300", align === "right" && "text-right tabular-nums")}>
+        {formatEditorDisplayValue(fieldKey, rawValue)}
+      </span>
+    );
+  }
+
+  if (definition.type === "select") {
+    const options = optionSets[fieldKey] ?? [];
+
+    return (
+      <select
+        value={value}
+        disabled={disabled}
+        aria-label={definition.label}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => {
+          void onSave(project, fieldKey, event.target.value);
+        }}
+        className={baseClass}
+      >
+        <option value="">-</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (definition.type === "textarea") {
+    return (
+      <textarea
+        key={`${cellKey}:${value}`}
+        defaultValue={value}
+        disabled={disabled}
+        rows={4}
+        aria-label={definition.label}
+        onClick={(event) => event.stopPropagation()}
+        onBlur={(event) => {
+          void onSave(project, fieldKey, event.target.value);
+        }}
+        className={clsx(baseClass, "min-h-24 resize-y leading-6")}
+      />
+    );
+  }
+
+  return (
+    <input
+      key={`${cellKey}:${value}`}
+      defaultValue={value}
+      disabled={disabled}
+      type={definition.type === "date" ? "date" : definition.type === "number" ? "number" : "text"}
+      step={"step" in definition ? definition.step : undefined}
+      aria-label={definition.label}
+      onClick={(event) => event.stopPropagation()}
+      onBlur={(event) => {
+        void onSave(project, fieldKey, event.target.value);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+
+        if (event.key === "Escape") {
+          event.currentTarget.value = value;
+          event.currentTarget.blur();
+        }
+      }}
+      className={baseClass}
+    />
+  );
+}
+
+function EditableDetailRow({
+  project,
+  fieldKey,
+  optionSets,
+  canEdit,
+  savingCell,
+  onSave,
+  label,
+}: ProjectEditorProps & {
+  fieldKey: EditableProjectFieldKey;
+  label?: string;
+}) {
+  return (
+    <DetailRow
+      label={label ?? editableProjectFields[fieldKey].label}
+      value={
+        <ProjectFieldEditor
+          project={project}
+          fieldKey={fieldKey}
+          optionSets={optionSets}
+          canEdit={canEdit}
+          savingCell={savingCell}
+          onSave={onSave}
+        />
+      }
+    />
+  );
+}
+
+function formatEditorDisplayValue(fieldKey: EditableProjectFieldKey, value: Project[EditableProjectFieldKey]) {
+  if (value === null || value === undefined || value === "") {
+    return empty;
+  }
+
+  if (editableProjectFields[fieldKey].type === "date") {
+    return formatDate(String(value));
+  }
+
+  if (["orderValue", "invoicedValue", "jobCost", "jobProfit"].includes(fieldKey)) {
+    return formatCurrency(typeof value === "number" ? value : Number(value));
+  }
+
+  return String(value);
+}
+
 function DetailRow({ label, value }: { label: string; value?: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 border-b border-[#334155]/70 py-2 last:border-b-0">
@@ -789,40 +1147,55 @@ function DetailRow({ label, value }: { label: string; value?: React.ReactNode })
   );
 }
 
-function Overview({ project }: { project: Project }) {
+function Overview(props: ProjectEditorProps) {
   return (
     <div className="space-y-5">
       <section>
+        <h3 className="mb-2 text-sm font-semibold text-slate-100">Board</h3>
+        <dl>
+          <EditableDetailRow {...props} fieldKey="projectName" label="Project" />
+          <EditableDetailRow {...props} fieldKey="jobNumber" label="Job Number" />
+          <EditableDetailRow {...props} fieldKey="groupName" label="Group" />
+          <EditableDetailRow {...props} fieldKey="mondayStatus" label="Monday" />
+          <EditableDetailRow {...props} fieldKey="stage" label="Stage" />
+          <EditableDetailRow {...props} fieldKey="calcStatus" label="Calc" />
+          <EditableDetailRow {...props} fieldKey="status" label="Status" />
+          <EditableDetailRow {...props} fieldKey="userFolderPath" label="User Folder" />
+          <EditableDetailRow {...props} fieldKey="driveFolderPath" label="O: Drive Folder" />
+        </dl>
+      </section>
+      <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Schedule</h3>
         <dl>
-          <DetailRow label="Install" value={formatDate(project.installationDate)} />
-          <DetailRow label="Fixed" value={formatDate(project.fixedDate)} />
-          <DetailRow label="Drawings" value={formatDate(project.drawingsRequiredDate)} />
-          <DetailRow label="Created" value={formatDate(project.createdOn)} />
-          <DetailRow label="Confirmed" value={formatDate(project.orderConfirmed)} />
+          <EditableDetailRow {...props} fieldKey="installationDate" label="Install" />
+          <EditableDetailRow {...props} fieldKey="fixedDate" label="Fixed" />
+          <EditableDetailRow {...props} fieldKey="drawingsRequiredDate" label="Drawings" />
+          <EditableDetailRow {...props} fieldKey="createdOn" label="Created" />
+          <EditableDetailRow {...props} fieldKey="orderConfirmed" label="Confirmed" />
+          <EditableDetailRow {...props} fieldKey="detailingStart" label="Detailing Start" />
+          <EditableDetailRow {...props} fieldKey="detailingDaysRemaining" label="Detailing Days" />
         </dl>
       </section>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">People</h3>
         <dl>
-          <DetailRow label="Rep" value={clean(project.rep)} />
-          <DetailRow label="Owner" value={clean(project.ownerDynamics)} />
-          <DetailRow label="Detailer" value={clean(project.detailer)} />
-          <DetailRow label="Approval" value={clean(project.approvalContact)} />
-          <DetailRow label="Site liaison" value={clean(project.siteLiaisonContact)} />
+          <EditableDetailRow {...props} fieldKey="rep" label="Rep" />
+          <EditableDetailRow {...props} fieldKey="ownerDynamics" label="Owner" />
+          <EditableDetailRow {...props} fieldKey="detailer" label="Detailer" />
+          <EditableDetailRow {...props} fieldKey="approvalContact" label="Approval" />
+          <EditableDetailRow {...props} fieldKey="siteLiaisonContact" label="Site liaison" />
+          <EditableDetailRow {...props} fieldKey="endClientContact" label="End client" />
         </dl>
       </section>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Comments</h3>
-        <p className="whitespace-pre-wrap border border-[#334155] bg-[#020617] p-3 text-sm leading-6 text-slate-300">
-          {clean(project.comments)}
-        </p>
+        <ProjectFieldEditor {...props} fieldKey="comments" />
       </section>
     </div>
   );
 }
 
-function Site({ project }: { project: Project }) {
+function Site(props: ProjectEditorProps) {
   return (
     <div className="space-y-5">
       <section>
@@ -831,59 +1204,68 @@ function Site({ project }: { project: Project }) {
           Site
         </h3>
         <dl>
-          <DetailRow label="Account" value={clean(project.siteAccount)} />
-          <DetailRow label="Industry" value={clean(project.siteAccountIndustry)} />
-          <DetailRow label="Post code" value={clean(project.sitePostCode)} />
-          <DetailRow label="Location" value={clean(project.location)} />
-          <DetailRow label="Nearest A&E" value={clean(project.nearestAe)} />
-          <DetailRow label="Billing" value={clean(project.billingAccount)} />
+          <EditableDetailRow {...props} fieldKey="siteAccount" label="Account" />
+          <EditableDetailRow {...props} fieldKey="siteAccountIndustry" label="Industry" />
+          <EditableDetailRow {...props} fieldKey="sitePostCode" label="Post code" />
+          <EditableDetailRow {...props} fieldKey="location" label="Location" />
+          <EditableDetailRow {...props} fieldKey="accAddToLocation" label="Acc Add" />
+          <EditableDetailRow {...props} fieldKey="nearestAe" label="Nearest A&E" />
+          <EditableDetailRow {...props} fieldKey="billingAccount" label="Billing" />
+          <EditableDetailRow {...props} fieldKey="email" label="Email" />
+          <EditableDetailRow {...props} fieldKey="mobilePhone" label="Mobile" />
         </dl>
       </section>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Delivery</h3>
-        <p className="whitespace-pre-wrap border border-[#334155] bg-[#020617] p-3 text-sm leading-6 text-slate-300">
-          {clean(project.deliveryComments)}
-        </p>
+        <ProjectFieldEditor {...props} fieldKey="deliveryComments" />
       </section>
     </div>
   );
 }
 
-function Spec({ project }: { project: Project }) {
+function Spec(props: ProjectEditorProps) {
   return (
     <div className="space-y-5">
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Structure</h3>
         <dl>
-          <DetailRow label="Use" value={clean(project.useCase)} />
-          <DetailRow label="Type" value={clean(project.structureType)} />
-          <DetailRow label="Style" value={clean(project.style)} />
-          <DetailRow label="Roof" value={clean(project.roofShape)} />
-          <DetailRow label="Support" value={clean(project.supportType)} />
-          <DetailRow label="Size" value={clean(project.structureSize)} />
-          <DetailRow label="Cladding" value={clean(project.claddingType)} />
-          <DetailRow label="Finish" value={clean(project.frameworkFinish)} />
-          <DetailRow label="Colour" value={clean(project.colour)} />
+          <EditableDetailRow {...props} fieldKey="useCase" label="Use" />
+          <EditableDetailRow {...props} fieldKey="structureType" label="Type" />
+          <EditableDetailRow {...props} fieldKey="style" label="Style" />
+          <EditableDetailRow {...props} fieldKey="roofShape" label="Roof" />
+          <EditableDetailRow {...props} fieldKey="supportType" label="Support" />
+          <EditableDetailRow {...props} fieldKey="structureSize" label="Size" />
+          <EditableDetailRow {...props} fieldKey="claddingType" label="Cladding" />
+          <EditableDetailRow {...props} fieldKey="gableEnds" label="Gable Ends" />
+          <EditableDetailRow {...props} fieldKey="sidewalls" label="Sidewalls" />
+          <EditableDetailRow {...props} fieldKey="frameworkFinish" label="Finish" />
+          <EditableDetailRow {...props} fieldKey="colour" label="Colour" />
+          <EditableDetailRow {...props} fieldKey="galvHolesAdded" label="Galv Holes" />
+          <EditableDetailRow {...props} fieldKey="boltCapColour" label="Bolt Caps" />
         </dl>
       </section>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Loads & Groundwork</h3>
         <dl>
-          <DetailRow label="EX class" value={clean(project.exClass)} />
-          <DetailRow label="Wind site" value={clean(project.windSite)} />
-          <DetailRow label="Wind structure" value={clean(project.windStructure)} />
-          <DetailRow label="Snow" value={clean(project.snow)} />
-          <DetailRow label="Altitude" value={clean(project.altitude)} />
-          <DetailRow label="Foundations" value={clean(project.foundationsBy)} />
-          <DetailRow label="Concrete" value={clean(project.concreteType)} />
-          <DetailRow label="Pad finish" value={clean(project.padFinish)} />
+          <EditableDetailRow {...props} fieldKey="exClass" label="EX class" />
+          <EditableDetailRow {...props} fieldKey="windSite" label="Wind site" />
+          <EditableDetailRow {...props} fieldKey="windStructure" label="Wind structure" />
+          <EditableDetailRow {...props} fieldKey="snow" label="Snow" />
+          <EditableDetailRow {...props} fieldKey="altitude" label="Altitude" />
+          <EditableDetailRow {...props} fieldKey="windSnowLoads" label="Wind/Snow" />
+          <EditableDetailRow {...props} fieldKey="distToSeaK" label="Dist to sea" />
+          <EditableDetailRow {...props} fieldKey="foundationsBy" label="Foundations" />
+          <EditableDetailRow {...props} fieldKey="concreteType" label="Concrete" />
+          <EditableDetailRow {...props} fieldKey="padFinish" label="Pad finish" />
         </dl>
       </section>
     </div>
   );
 }
 
-function Finance({ project }: { project: Project }) {
+function Finance(props: ProjectEditorProps) {
+  const { project } = props;
+
   return (
     <div className="space-y-5">
       <section>
@@ -892,22 +1274,28 @@ function Finance({ project }: { project: Project }) {
           Commercials
         </h3>
         <dl>
-          <DetailRow label="Order value" value={formatCurrency(project.orderValue)} />
-          <DetailRow label="Invoiced" value={formatCurrency(project.invoicedValue)} />
-          <DetailRow label="Job cost" value={formatCurrency(project.jobCost)} />
-          <DetailRow label="Profit" value={formatCurrency(project.jobProfit)} />
+          <EditableDetailRow {...props} fieldKey="orderValue" label="Order value" />
+          <EditableDetailRow {...props} fieldKey="invoicedValue" label="Invoiced" />
+          <EditableDetailRow {...props} fieldKey="jobCost" label="Job cost" />
+          <EditableDetailRow {...props} fieldKey="jobProfit" label="Profit" />
           <DetailRow label="Margin" value={formatPercent(project.jobMargin)} />
-          <DetailRow label="Low margin" value={clean(project.lowMarginReasonType)} />
+          <EditableDetailRow {...props} fieldKey="lowMarginReasonType" label="Low margin" />
+          <EditableDetailRow {...props} fieldKey="lowMarginReasonDescription" label="Margin note" />
         </dl>
       </section>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-100">Operations</h3>
         <dl>
-          <DetailRow label="Installer" value={clean(project.frameworkInstaller)} />
-          <DetailRow label="Groundworker" value={clean(project.groundworker)} />
-          <DetailRow label="Pad finisher" value={clean(project.padFinisher)} />
-          <DetailRow label="MFG zone" value={clean(project.mfgZone)} />
-          <DetailRow label="MFG column" value={clean(project.mfgCantColumn)} />
+          <EditableDetailRow {...props} fieldKey="frameworkInstaller" label="Installer" />
+          <EditableDetailRow {...props} fieldKey="groundworker" label="Groundworker" />
+          <EditableDetailRow {...props} fieldKey="padFinisher" label="Pad finisher" />
+          <EditableDetailRow {...props} fieldKey="mfgZone" label="MFG zone" />
+          <EditableDetailRow {...props} fieldKey="mfgCantColumn" label="MFG column" />
+          <EditableDetailRow {...props} fieldKey="mfgOrOther" label="MFG/Other" />
+          <EditableDetailRow {...props} fieldKey="gwkSupplierConnect" label="GWK Supplier" />
+          <EditableDetailRow {...props} fieldKey="padFinishQuotes" label="Pad quotes" />
+          <EditableDetailRow {...props} fieldKey="ramsSignOff" label="RAMs sign off" />
+          <EditableDetailRow {...props} fieldKey="rams" label="RAMs" />
         </dl>
       </section>
     </div>
