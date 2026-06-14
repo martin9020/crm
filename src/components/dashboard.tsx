@@ -86,8 +86,8 @@ const groupTextColors: Record<string, string> = {
   Completed: "#1a2e05",
 };
 const dropdownMenuOptionStyle: CSSProperties = {
-  backgroundColor: "#ffffff",
-  color: "#0f172a",
+  backgroundColor: "#0f172a",
+  color: "#f8fafc",
 };
 
 const tabs: Array<{ id: Tab; label: string }> = [
